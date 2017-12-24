@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 #include <FS.h>
 #include <memory>
 #include <ESP8266WebServer.h>
@@ -19,8 +21,8 @@
 #include <WiFiManager.h>
 
 
-#include <SparkFun_Si7021_Breakout_Library.h>
-#include <SparkFunCCS811.h>
+#include <SI7021.h>
+#include <Adafruit_CCS811.h>
 #include <Wire.h>
 #include <Adafruit_NeoPixel.h>
 
@@ -30,7 +32,7 @@
 #define DEBUG_MSG(...)
 #endif
 
-#define CCS811_ADDR 0x5A 
+const int ccs811Addr = 0x5A;
 const int sclPin = D1;
 const int sdaPin = D2;
 const int intPin = D3;
@@ -47,12 +49,12 @@ int nb_restart = 0;
 
 float temp_correction = 0;
 
-CCS811 co2sensor(CCS811_ADDR);
+Adafruit_CCS811 co2sensor;
 
 float humidity = 0;
 float temp = 0;
 
-Weather sensor;
+SI7021 sensor;
 
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(2, ledPin, NEO_RGB + NEO_KHZ800);
 
@@ -67,6 +69,34 @@ void saveConfigCallback () {
   shouldSaveConfig = true;
 }
 
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+/*  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is acive low on the ESP-01)
+  } else {
+    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+  }
+*/
+  std::unique_ptr<char[]> buf(new char[length+1]);
+  memcpy(buf.get(),payload,length);
+  buf[length] = 0;
+
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject& json = jsonBuffer.parseObject(buf.get());
+  if (json.success()) {
+    temp_correction = json["temp_correction"];
+  }
+}
 
 void setup_wifi() {
 
@@ -192,34 +222,7 @@ void mqtt_reconnect() {
   }
 }
 
-void mqtt_callback(char* topic, byte* payload, unsigned int length) {
-/*  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
 
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
-  }
-*/
-  std::unique_ptr<char[]> buf(new char[length+1]);
-  memcpy(buf.get(),payload,length);
-  buf[length] = 0;
-
-  DynamicJsonBuffer jsonBuffer;
-  JsonObject& json = jsonBuffer.parseObject(buf.get());
-  if (json.success()) {
-    temp_correction = json["temp_correction"];
-  }
-}
 
 void init_co2_sensor() {
   // reset sensor
@@ -229,13 +232,10 @@ void init_co2_sensor() {
   digitalWrite(rstPin, 1);
   delay(500);
 
-  //It is recommended to check return status on .begin(), but it is not
-  //required.
-  CCS811Core::status returnCode = co2sensor.begin();
-  while (returnCode != CCS811Core::SENSOR_SUCCESS)
+
+  while (!co2sensor.begin(ccs811Addr))
   {
-    Serial.print(".begin() returned with an error: ");
-    Serial.println(returnCode);
+    Serial.print(".begin() returned with an error.");
     leds.setPixelColor(0, 0x05, 0x00, 0x00);
     leds.setPixelColor(1, 0x05, 0x00, 0x00);
     leds.show();
@@ -256,13 +256,11 @@ void init_co2_sensor() {
     leds.setPixelColor(0, 0x00, 0x00, 0x00);
     leds.setPixelColor(1, 0x00, 0x00, 0x00);
     leds.show();
-    delay(4000);
-    CCS811Core::status returnCode = co2sensor.begin();  
-    
+    delay(4000);    
   }
 
  // co2sensor.setDriveMode(2);
-  co2sensor.disableInterrupts();
+  co2sensor.disableInterrupt();
 
 }
 
@@ -291,8 +289,7 @@ void setup()
 
   init_co2_sensor();
 //Initialize the I2C sensors and ping them
-  sensor.begin();
-  sensor.reset();
+  sensor.begin(sdaPin, sclPin);
 }
 
 uint32_t getColorFromValue(uint16_t valuePPM) {
@@ -380,6 +377,28 @@ void i2crecovery() {
 
 }
 
+//---------------------------------------------------------------
+void getWeather()
+{
+  auto measure = sensor.getTempAndRH();
+  humidity = measure.humidityPercent;
+  temp = (measure.celsiusHundredths / 100.0) + temp_correction;
+}
+
+void printInfo()
+{
+//This function prints the weather data out to the default Serial Port
+
+  Serial.print("Temp:");
+  Serial.print(temp);
+  Serial.print("C, ");
+
+  Serial.print("Humidity:");
+  Serial.print(humidity);
+  Serial.println("%");
+}
+
+
 int nb_values = 0;
 uint16_t sum_values_co2 = 0;
 uint16_t sum_values_tvoc = 0;
@@ -406,80 +425,52 @@ void loop()
     nb_restart++;
   }
 
+
   if(nb_restart > 4) {
     ESP.restart();
   }
 
   //Check to see if data is ready with .dataAvailable()
-  if  (co2sensor.dataAvailable())
+  if  (co2sensor.available())
   {
-    //If so, have the sensor read and calculate the results.
-    //Get them later
-    if(co2sensor.readAlgorithmResults() == CCS811Core::SENSOR_SUCCESS) {
-      nb_loop_without_value = 0;
-      nb_restart = 0;
-      Serial.print("CO2[");
-      //Returns calculated CO2 reading
-      Serial.print (co2sensor.getCO2());
-      Serial.print("] tVOC[");
-      //Returns calculated TVOC reading
-      Serial.print (co2sensor.getTVOC());
-      Serial.print("] millis[");
-      //Simply the time since program start
-      Serial.print(millis());
-      Serial.print("]");
-      Serial.println();
-  
-      leds.setPixelColor(0, getColorFromValue(co2sensor.getCO2()));
-      leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
-      leds.show();
-  
-      nb_values++;
-      sum_values_co2+=co2sensor.getCO2();
-      sum_values_tvoc+=co2sensor.getTVOC();
+   
+    co2sensor.readData();
+    nb_loop_without_value = 0;
+    nb_restart = 0;
+    Serial.print("CO2[");
+    //Returns calculated CO2 reading
+    Serial.print (co2sensor.geteCO2());
+    Serial.print("] tVOC[");
+    //Returns calculated TVOC reading
+    Serial.print (co2sensor.getTVOC());
+    Serial.print("] millis[");
+    //Simply the time since program start
+    Serial.print(millis());
+    Serial.print("]");
+    Serial.println();
 
-      if(nb_values >=10) {
+    leds.setPixelColor(0, getColorFromValue(co2sensor.geteCO2()));
+    leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
+    leds.show();
+
+    nb_values++;
+    sum_values_co2+=co2sensor.geteCO2();
+    sum_values_tvoc+=co2sensor.getTVOC();
+
+    if(nb_values >=10) {
         getWeather();
         co2sensor.setEnvironmentalData(humidity,temp);
         printInfo();
-    
+
         publish_enviroment_data(sum_values_co2 / nb_values,
                                 sum_values_tvoc / nb_values,humidity, temp);
 
         nb_values = 0;
         sum_values_co2 = 0;
         sum_values_tvoc = 0;
-   
-      }
-      
     }
   } 
 
   delay(200); //Don't spam the I2C bus
 }
 
-//---------------------------------------------------------------
-void getWeather()
-{
-  // Measure Relative Humidity from the HTU21D or Si7021
-  humidity = sensor.getRH();
-
-  // Measure Temperature from the HTU21D or Si7021
-  temp = sensor.getTemp() + temp_correction;
-  // Temperature is measured every time RH is requested.
-  // It is faster, therefore, to read it from previous RH
-  // measurement with getTemp() instead with readTemp()
-}
-
-void printInfo()
-{
-//This function prints the weather data out to the default Serial Port
-
-  Serial.print("Temp:");
-  Serial.print(temp);
-  Serial.print("C, ");
-
-  Serial.print("Humidity:");
-  Serial.print(humidity);
-  Serial.println("%");
-}

@@ -1,7 +1,0 @@
-{
-    "sketch": "src/co2.ino",
-    "board": "esp8266com:esp8266:d1_mini_pro",
-    "configuration": "CpuFrequency=80,FlashSize=16M15M,LwIPVariant=open,Debug=Serial,DebugLevel=None____,UploadSpeed=921600",
-    "port": "COM18",
-    "output": "build/co2"
-}
