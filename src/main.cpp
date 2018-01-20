@@ -20,15 +20,17 @@
 #include <PubSubClient.h>
 #include <WiFiManager.h>
 
-#include <Adafruit_CCS811.h>
 #include <Adafruit_NeoPixel.h>
+#include <CCS811.h>
 #include <SI7021.h>
 #include <Wire.h>
 
 #ifdef DEBUG_ESP_PORT
 #define DEBUG_MSG(...) DEBUG_ESP_PORT.printf(__VA_ARGS__)
+#define DEBUG_MSGF(msg, ...) DEBUG_ESP_PORT.printf(F(msg), __VA_ARGS__)
 #else
 #define DEBUG_MSG(...)
+#define DEBUG_MSGF(msg, ...)
 #endif
 
 const int ccs811Addr = 0x5A;
@@ -48,7 +50,7 @@ int nb_restart = 0;
 
 float temp_correction = 0;
 
-Adafruit_CCS811 co2sensor;
+CCS811 co2sensor;
 
 float humidity = 0;
 float temp = 0;
@@ -162,7 +164,7 @@ void setup_wifi() {
   leds.show();
 
   if (!wifiManager.autoConnect("AutoConnectAP")) {
-    DEBUG_MSG("failed to connect and hit timeout");
+    DEBUG_MSGF("failed to connect and hit timeout\n");
     delay(3000);
     // reset and try again, or maybe put it to deep sleep
     ESP.reset();
@@ -260,8 +262,8 @@ void init_co2_sensor() {
 void setup() {
   Serial.begin(74880);
 
-  Serial.print(F("Starting"));
-  DEBUG_MSG("Debug Message\n");
+  Serial.print(F("Starting\n"));
+  DEBUG_MSG(F("Debug Message\n"));
 
   leds.begin();
   leds.setPixelColor(0, 0x00, 0x00, 0x00);
@@ -424,59 +426,55 @@ void loop() {
     nb_restart++;
   }
 
+  // too much restart of I2C, restart all.
   if (nb_restart > 4) {
     ESP.restart();
   }
 
-  // Check to see if data is ready with .dataAvailable()
-  if (co2sensor.available()) {
+  // Readdata return true if data available
+  if (co2sensor.readData()) {
+    nb_loop_without_value = 0;
+    nb_restart = 0;
+    Serial.print("CO2[");
+    // Returns calculated CO2 reading
+    Serial.print(co2sensor.geteCO2());
+    Serial.print("] tVOC[");
+    // Returns calculated TVOC reading
+    Serial.print(co2sensor.getTVOC());
+    Serial.print("] millis[");
+    // Simply the time since program start
+    Serial.print(millis());
+    Serial.print("]");
+    Serial.println();
 
-    co2sensor.readData();
+    leds.setPixelColor(0, getColorFromValue(co2sensor.geteCO2()));
+    leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
+    leds.show();
 
-    // detect invalid value
-    // TODO correct library for readData
-    if (co2sensor.geteCO2() != 0xffff || co2sensor.getTVOC() != 0xffff) {
-      nb_loop_without_value = 0;
-      nb_restart = 0;
-      Serial.print("CO2[");
-      // Returns calculated CO2 reading
-      Serial.print(co2sensor.geteCO2());
-      Serial.print("] tVOC[");
-      // Returns calculated TVOC reading
-      Serial.print(co2sensor.getTVOC());
-      Serial.print("] millis[");
-      // Simply the time since program start
-      Serial.print(millis());
-      Serial.print("]");
-      Serial.println();
+    nb_values++;
+    sum_values_co2 += co2sensor.geteCO2();
+    sum_values_tvoc += co2sensor.getTVOC();
 
-      leds.setPixelColor(0, getColorFromValue(co2sensor.geteCO2()));
-      leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
-      leds.show();
+    if (nb_values >= 10) {
+      nb_values_moy++;
+      getWeather();
 
-      nb_values++;
-      sum_values_co2 += co2sensor.geteCO2();
-      sum_values_tvoc += co2sensor.getTVOC();
-
-      if (nb_values >= 10) {
-        nb_values_moy++;
-        getWeather();
-
-        if (nb_values_moy > 60) {
-          nb_values_moy = 0;
-          co2sensor.setEnvironmentalData(humidity, temp);
-          printInfo();
-          delay(100);
-        }
-
-        publish_enviroment_data(sum_values_co2 / nb_values,
-                                sum_values_tvoc / nb_values, humidity, temp);
-
-        nb_values = 0;
-        sum_values_co2 = 0;
-        sum_values_tvoc = 0;
+      if (nb_values_moy > 60) {
+        nb_values_moy = 0;
+        co2sensor.setEnvironmentalData(humidity, temp);
+        printInfo();
+        delay(100);
       }
+
+      publish_enviroment_data(sum_values_co2 / nb_values,
+                              sum_values_tvoc / nb_values, humidity, temp);
+
+      nb_values = 0;
+      sum_values_co2 = 0;
+      sum_values_tvoc = 0;
     }
+  } else {
+    
   }
 
   delay(200); // Don't spam the I2C bus
