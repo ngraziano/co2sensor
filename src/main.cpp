@@ -231,7 +231,7 @@ void init_co2_sensor() {
   delay(500);
 
   while (!co2sensor.begin(ccs811Addr)) {
-    Serial.print(".begin() returned with an error.");
+    Serial.print(".begin() returned with an error.\n");
     leds.setPixelColor(0, 0x05, 0x00, 0x00);
     leds.setPixelColor(1, 0x05, 0x00, 0x00);
     leds.show();
