@@ -2,15 +2,15 @@
 bool CCS811::begin(uint8_t addr) {
   _i2caddr = addr;
   _i2c_init();
-
   SWReset();
   delay(100);
 
-  uint8_t id;
+  uint8_t id = 0;
   _lastI2cError = read(Ccs811Register::hw_id, &id, 1);
   // check that the HW id is correct
-  if (_lastI2cError != 0 || id != CCS811_HW_ID_CODE)
+  if (_lastI2cError != 0 || id != CCS811_HW_ID_CODE) {
     return false;
+  }
 
   // try to start the app
   _lastI2cError = this->write(Ccs811Register::app_start, NULL, 0);
@@ -19,6 +19,7 @@ bool CCS811::begin(uint8_t addr) {
   // make sure there are no errors and we have entered application mode
   if (checkError())
     return false;
+
   if (!_status.FW_MODE)
     return false;
 
@@ -168,7 +169,7 @@ uint8_t CCS811::read(Ccs811Register reg, uint8_t *buf, uint8_t num) {
   Wire.write((uint8_t)reg);
   uint8_t result = Wire.endTransmission();
 
-  if (result != 0) {
+  if (result == 0) {
     Wire.requestFrom(_i2caddr, num);
     for (int i = 0; i < num && Wire.available(); i++) {
       buf[i] = Wire.read();
