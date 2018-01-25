@@ -25,13 +25,21 @@
 #include <SI7021.h>
 #include <Wire.h>
 
+#include <ArduinoOTA.h>
+
+#include "i2c_util.h"
+
 #ifdef DEBUG_ESP_PORT
-#define DEBUG_MSG(...) DEBUG_ESP_PORT.printf(__VA_ARGS__)
-#define DEBUG_MSGF(msg, ...) DEBUG_ESP_PORT.printf(F(msg), __VA_ARGS__)
+#define DEBUG_MSG(...) DEBUG_ESP_PORT.printf( __VA_ARGS__ )
+#define DEBUG_MSG_PP(msg, ...) DEBUG_ESP_PORT.printf_P(PSTR(msg), ##__VA_ARGS__)
 #else
 #define DEBUG_MSG(...)
-#define DEBUG_MSGF(msg, ...)
+#define DEBUG_MSG_PP(msg, ...)
 #endif
+
+static const char config_topic[] PROGMEM = "test/co2config";
+static const char light_topic[] PROGMEM = "test/co2light";
+static const char host_name[] PROGMEM = "ESP-CO2";
 
 const int ccs811Addr = 0x5A;
 const int sclPin = D1;
@@ -49,7 +57,7 @@ int nb_loop_without_value = 0;
 int nb_restart = 0;
 
 float temp_correction = 0;
-
+bool light_on = true;
 CCS811 co2sensor;
 
 float humidity = 0;
@@ -57,10 +65,29 @@ float temp = 0;
 
 SI7021 sensor;
 
-Adafruit_NeoPixel leds = Adafruit_NeoPixel(2, ledPin, NEO_RGB + NEO_KHZ800);
+Adafruit_NeoPixel leds = Adafruit_NeoPixel(3, ledPin, NEO_RGB + NEO_KHZ800);
 
 WiFiClient mqttTcpClient;
-PubSubClient mqttClient(mqttTcpClient);
+
+class PubSubClientPlus : public PubSubClient {
+  public:
+    PubSubClientPlus(Client& client) : PubSubClient(client) {
+
+  };
+
+  boolean subscribe(const __FlashStringHelper* topic) {
+    std::unique_ptr<char[]> buf(new char[strlen_P((PGM_P)topic) + 1]);
+    strcpy_P(buf.get(), (PGM_P)topic);
+
+    return PubSubClient::subscribe(buf.get(), 0);
+  }
+
+};
+
+PubSubClientPlus mqttClient(mqttTcpClient);
+
+
+
 
 // flag for saving data
 bool shouldSaveConfig = false;
@@ -69,44 +96,31 @@ bool shouldSaveConfig = false;
 void saveConfigCallback() { shouldSaveConfig = true; }
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length) {
-  /*  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the
-  voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the
-  voltage HIGH
-  }
-*/
   std::unique_ptr<char[]> buf(new char[length + 1]);
   memcpy(buf.get(), payload, length);
   buf[length] = 0;
 
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.parseObject(buf.get());
+
   if (json.success()) {
-    temp_correction = json["temp_correction"];
+    if(strcmp_P(topic, config_topic) == 0) {
+      temp_correction = json[F("temp_correction")];
+    } else if (strcmp_P(topic, light_topic) == 0) {
+      light_on = json[F("light_on")];
+    }
+    
   }
 }
 
 void setup_wifi() {
 
   if (SPIFFS.begin()) {
-    DEBUG_MSG("mounted file system");
+    DEBUG_MSG_PP("mounted file system");
 
     if (SPIFFS.exists("/config.json")) {
       // file exists, reading and loading
-      DEBUG_MSG("reading config file");
+      DEBUG_MSG_PP("reading config file");
       File configFile = SPIFFS.open("/config.json", "r");
       if (configFile) {
         size_t size = configFile.size();
@@ -119,17 +133,17 @@ void setup_wifi() {
 
         if (json.success()) {
           String toto;
-          strcpy(mqtt_server, json["mqtt_server"]);
-          mqtt_port = json["mqtt_port"];
-          strcpy(mqtt_user, json["mqtt_user"]);
-          strcpy(mqtt_password, json["mqtt_password"]);
+          strcpy(mqtt_server, json[F("mqtt_server")]);
+          mqtt_port = json[F("mqtt_port")];
+          strcpy(mqtt_user, json[F("mqtt_user")]);
+          strcpy(mqtt_password, json[F("mqtt_password")]);
         } else {
-          DEBUG_MSG("failed to load json config");
+          DEBUG_MSG_PP("failed to load json config");
         }
       }
     }
   } else {
-    DEBUG_MSG("failed to mount FS");
+    DEBUG_MSG_PP("failed to mount FS");
   }
 
   leds.setPixelColor(0, 0x10, 0x00, 0x00);
@@ -164,11 +178,10 @@ void setup_wifi() {
   leds.show();
 
   if (!wifiManager.autoConnect("AutoConnectAP")) {
-    DEBUG_MSGF("failed to connect and hit timeout\n");
+    DEBUG_MSG_PP("failed to connect and hit timeout\n");
     delay(3000);
-    // reset and try again, or maybe put it to deep sleep
+    // reset and try again
     ESP.reset();
-    delay(5000);
   }
 
   // read updated parameters
@@ -179,7 +192,7 @@ void setup_wifi() {
 
   // save the custom parameters to FS
   if (shouldSaveConfig) {
-    DEBUG_MSG("saving config");
+    DEBUG_MSG_PP("saving config");
     DynamicJsonBuffer jsonBuffer;
     JsonObject &json = jsonBuffer.createObject();
     json["mqtt_server"] = mqtt_server;
@@ -189,15 +202,15 @@ void setup_wifi() {
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
-      DEBUG_MSG("failed to open config file for writing");
+      DEBUG_MSG_PP("failed to open config file for writing");
     }
 
     // json.printTo(Serial);
     json.printTo(configFile);
     configFile.close();
   }
-  DEBUG_MSG("local ip : %s \n", WiFi.localIP().toString().c_str());
-  DEBUG_MSG("Set server : %s:%i, username : %s \n", mqtt_server, mqtt_port,
+  DEBUG_MSG_PP("local ip : %s \n", WiFi.localIP().toString().c_str());
+  DEBUG_MSG_PP("Set server : %s:%i, username : %s \n", mqtt_server, mqtt_port,
             mqtt_user);
 
   mqttClient.setServer(mqtt_server, mqtt_port);
@@ -206,16 +219,17 @@ void setup_wifi() {
 
 void mqtt_reconnect() {
   while (!mqttClient.connected()) {
-    DEBUG_MSG("Attempting MQTT connection...\n");
+    DEBUG_MSG_PP("Attempting MQTT connection...\n");
     if (mqttClient.connect("co2sensor", mqtt_user, mqtt_password)) {
-      DEBUG_MSG("connected\n");
+      DEBUG_MSG_PP("connected\n");
       // Once connected, publish an announcement...
       // client.publish("outTopic", "hello world");
       // ... and resubscribe
-      mqttClient.subscribe("test/co2config");
+      mqttClient.subscribe(FPSTR (config_topic));
+      mqttClient.subscribe(FPSTR (light_topic));
     } else {
-      DEBUG_MSG("failed, rc=%i\n", mqttClient.state());
-      DEBUG_MSG(" try again in 5 seconds\n");
+      DEBUG_MSG_PP("failed, rc=%i\n", mqttClient.state());
+      DEBUG_MSG_PP(" try again in 5 seconds\n");
       // Wait 5 seconds before retrying
       delay(5000);
     }
@@ -255,7 +269,7 @@ void init_co2_sensor() {
     delay(4000);
   }
 
-  // co2sensor.setDriveMode(2);
+  co2sensor.setDriveMode(Ccs811Drive::mode_1sec);
   co2sensor.disableInterrupt();
 }
 
@@ -263,7 +277,7 @@ void setup() {
   Serial.begin(74880);
 
   Serial.print(F("Starting\n"));
-  DEBUG_MSG(F("Debug Message\n"));
+  DEBUG_MSG_PP("Debug Message\n");
 
   leds.begin();
   leds.setPixelColor(0, 0x00, 0x00, 0x00);
@@ -275,6 +289,24 @@ void setup() {
   leds.setPixelColor(0, 0x10, 0x10, 0x10);
   leds.setPixelColor(1, 0x00, 0x00, 0x00);
   leds.show();
+
+  ArduinoOTA.setHostname(host_name);
+  ArduinoOTA.onStart([]() { // show
+    leds.setPixelColor(0, 0x00, 0x00, 0x20);
+    leds.setPixelColor(1, 0x00, 0x00, 0x20);
+    leds.show();
+  });
+
+  ArduinoOTA.onEnd([]() {
+    leds.setPixelColor(0, 0x00, 0x00, 0x00);
+    leds.setPixelColor(1, 0x00, 0x10, 0x10);
+    leds.show();
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) { ESP.restart(); });
+
+  /* setup the OTA server */
+  ArduinoOTA.begin();
 
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(100000);
@@ -300,85 +332,13 @@ void publish_enviroment_data(uint16_t co2, uint16_t tvoc, float humidity,
                              float temperature) {
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.createObject();
-  json["co2"] = co2;
-  json["tvoc"] = tvoc;
-  json["humidity"] = humidity;
-  json["temperature"] = temperature;
+  json[F("co2")] = co2;
+  json[F("tvoc")] = tvoc;
+  json[F("humidity")] = humidity;
+  json[F("temperature")] = temperature;
   char message[256];
   json.printTo(message);
   mqttClient.publish("test/co2", message, true);
-}
-
-void i2crecovery() {
-  pinMode(sdaPin, INPUT_PULLUP); // Make SDA (data) and SCL (clock) pins
-                                 // Inputs with pullup.
-  pinMode(sclPin, INPUT_PULLUP);
-  delay(2500);
-  boolean slc_low = (digitalRead(sclPin) == LOW); // Check is SCL is Low.
-  if (slc_low) { // If it is held low Arduno cannot become the I2C master.
-    DEBUG_MSG("SCL held low, can not recover\n");
-    return; // I2C bus error. Could not clear SCL clock line held low
-  }
-
-  boolean sda_low = (digitalRead(sdaPin) == LOW); // vi. Check SDA input.
-  int clockCount = 20;                            // > 2x9 clock
-
-  while (sda_low && (clockCount > 0)) { //  vii. If SDA is Low,
-    clockCount--;
-    // Note: I2C bus is open collector so do NOT drive SCL or SDA high.
-    pinMode(sclPin, INPUT);  // release SCL pullup so that when made output
-                             // it will be LOW
-    pinMode(sclPin, OUTPUT); // then clock SCL Low
-    delayMicroseconds(10);   //  for >5uS
-    pinMode(sclPin, INPUT);  // release SCL LOW
-    pinMode(slc_low, INPUT_PULLUP); // turn on pullup resistors again
-    // do not force high as slave may be holding it low for clock
-    // stretching.
-    delayMicroseconds(10); //  for >5uS
-    // The >5uS is so that even the slowest I2C devices are handled.
-    slc_low = (digitalRead(sclPin) == LOW); // Check if SCL is Low.
-    int counter = 20;
-    while (
-        slc_low &&
-        (counter > 0)) { //  loop waiting for SCL to become High only wait 2sec.
-      counter--;
-      delay(100);
-      slc_low = (digitalRead(sclPin) == LOW);
-    }
-    if (slc_low) { // still low after 2 sec error
-      DEBUG_MSG("SCL held low, can not recover by slave clock stretch "
-                "for >2sec\n");
-      return; // I2C bus error. Could not clear. SCL clock line held low
-              // by slave clock stretch for >2sec
-    }
-    sda_low =
-        (digitalRead(sdaPin) == LOW); //   and check SDA input again and loop
-  }
-  if (sda_low) { // still low
-    DEBUG_MSG("Could not clear. SDA data line held low\n");
-    return; // I2C bus error. Could not clear. SDA data line held low
-  }
-
-  // else pull SDA line low for Start or Repeated Start
-  pinMode(sdaPin, INPUT);  // remove pullup.
-  pinMode(sdaPin, OUTPUT); // and then make it LOW i.e. send an I2C Start or
-                           // Repeated start control.
-  // When there is only one I2C master a Start or Repeat Start has the same
-  // function as a Stop and clears the bus.
-  /// A Repeat Start is a Start occurring after a Start with no intervening
-  /// Stop.
-  delayMicroseconds(10);  // wait >5uS
-  pinMode(sdaPin, INPUT); // remove output low
-  pinMode(sdaPin,
-          INPUT_PULLUP); // and make SDA high i.e. send I2C STOP control.
-  delayMicroseconds(10); // x. wait >5uS
-
-  DEBUG_MSG("bus recovery done, restart communication in 2s");
-  // return to power up mode
-  pinMode(sdaPin, INPUT);
-  pinMode(sclPin, INPUT);
-  delay(2000);
-  Wire.begin(sdaPin, sclPin);
 }
 
 //---------------------------------------------------------------
@@ -391,16 +351,12 @@ void getWeather() {
 void printInfo() {
   // This function prints the weather data out to the default Serial Port
 
-  Serial.print("Temp:");
-  Serial.print(temp);
-  Serial.print("C, ");
-
-  Serial.print("Humidity:");
-  Serial.print(humidity);
-  Serial.println("%");
+  Serial.printf_P(PSTR("Temp: %fC, Humidity: %f%%"), temp, humidity);
 }
 
+const int nb_values_for_avg = 10;
 int nb_values = 0;
+const int nb_values_for_env_correction = 30;
 int nb_values_moy = 0;
 uint16_t sum_values_co2 = 0;
 uint16_t sum_values_tvoc = 0;
@@ -414,12 +370,13 @@ void loop() {
 
   nb_loop_without_value++;
 
-  if (nb_loop_without_value > 30) {
+  if (nb_loop_without_value > 50) {
     // try to restart i2c
-    i2crecovery();
+    DEBUG_MSG_PP("I2C recovery need loop without value : %i\n", nb_loop_without_value);
+    i2c_util::i2crecovery(sdaPin, sclPin);
   }
 
-  if (nb_loop_without_value > 35) {
+  if (nb_loop_without_value > 55) {
     init_co2_sensor();
     // give time to startup again
     nb_loop_without_value = 0;
@@ -432,7 +389,7 @@ void loop() {
   }
 
   // Readdata return true if data available
-  if (co2sensor.readData()) {
+  if (co2sensor.available() && co2sensor.readData()) {
     nb_loop_without_value = 0;
     nb_restart = 0;
     Serial.print("CO2[");
@@ -447,19 +404,24 @@ void loop() {
     Serial.print("]");
     Serial.println();
 
-    leds.setPixelColor(0, getColorFromValue(co2sensor.geteCO2()));
-    leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
+    if(light_on) {
+      leds.setPixelColor(0, getColorFromValue(co2sensor.geteCO2()));
+      leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
+    } else {
+      leds.setPixelColor(0, 0);
+      leds.setPixelColor(1, 0);
+    }
     leds.show();
 
     nb_values++;
     sum_values_co2 += co2sensor.geteCO2();
     sum_values_tvoc += co2sensor.getTVOC();
 
-    if (nb_values >= 10) {
+    if (nb_values >= nb_values_for_avg) {
       nb_values_moy++;
       getWeather();
 
-      if (nb_values_moy > 60) {
+      if (nb_values_moy > nb_values_for_env_correction) {
         nb_values_moy = 0;
         co2sensor.setEnvironmentalData(humidity, temp);
         printInfo();
@@ -474,8 +436,10 @@ void loop() {
       sum_values_tvoc = 0;
     }
   } else {
-    
+    if(co2sensor.isI2CError()) {
+      DEBUG_MSG_PP("I2C error : loop : %i\n", nb_loop_without_value);
+    }
   }
 
-  delay(200); // Don't spam the I2C bus
+  delay(500); // Don't spam the I2C bus
 }
