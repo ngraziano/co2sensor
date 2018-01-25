@@ -1,5 +1,10 @@
 #include "CCS811.h"
 bool CCS811::begin(uint8_t addr) {
+  //default value for mode 
+  _meas_mode.DRIVE_MODE = 1;
+  _meas_mode.INT_DATARDY = 0;
+  _meas_mode.INT_THRESH = 0;
+
   _i2caddr = addr;
   _i2c_init();
   SWReset();
@@ -75,8 +80,8 @@ bool CCS811::readData() {
     return false;
 
   _status.set(buf[4]);
-
-  if (!_status.DATA_READY || _status.ERROR)
+  //Serial.printf("Buf %i,%i,%i,%i,%i,%i ",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+  if (_status.ERROR)
     return false;
 
   _eCO2 = ((uint16_t)buf[0] << 8) | ((uint16_t)buf[1]);

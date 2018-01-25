@@ -82,7 +82,7 @@ public:
 
   void setTempOffset(float offset) { _tempOffset = offset; }
 
-  bool isI2CError() { return _lastI2cError == 0; }
+  bool isI2CError() { return _lastI2cError != 0; }
 
   // check if data is available to be read
   bool available();
