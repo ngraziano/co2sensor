@@ -25,6 +25,7 @@
 #include <SI7021.h>
 #include <Wire.h>
 
+#include <ESP8266LLMNR.h>
 #include <ArduinoOTA.h>
 
 #include "i2c_util.h"
@@ -39,7 +40,7 @@
 
 static const char config_topic[] PROGMEM = "test/co2config";
 static const char light_topic[] PROGMEM = "test/co2light";
-static const char host_name[] PROGMEM = "ESP-CO2";
+static const char host_name[] = "esp-co2";
 
 const int ccs811Addr = 0x5A;
 const int sclPin = D1;
@@ -298,15 +299,19 @@ void setup() {
   });
 
   ArduinoOTA.onEnd([]() {
-    leds.setPixelColor(0, 0x00, 0x00, 0x00);
     leds.setPixelColor(1, 0x00, 0x10, 0x10);
     leds.show();
   });
 
-  ArduinoOTA.onError([](ota_error_t error) { ESP.restart(); });
+  ArduinoOTA.onError([](ota_error_t error) { 
+    leds.setPixelColor(0, 0xFF, 0x00, 0x00);
+    leds.show();
+    ESP.restart(); 
+  });
 
   /* setup the OTA server */
   ArduinoOTA.begin();
+  LLMNR.begin(host_name);  
 
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(100000);
@@ -356,12 +361,13 @@ void printInfo() {
 
 const int nb_values_for_avg = 10;
 int nb_values = 0;
-const int nb_values_for_env_correction = 30;
+const int nb_values_for_env_correction = 3;
 int nb_values_moy = 0;
-uint16_t sum_values_co2 = 0;
-uint16_t sum_values_tvoc = 0;
+uint32_t sum_values_co2 = 0;
+uint32_t sum_values_tvoc = 0;
 
 void loop() {
+  ArduinoOTA.handle();
   // handle incomming mqtt message
   if (!mqttClient.connected()) {
     mqtt_reconnect();
