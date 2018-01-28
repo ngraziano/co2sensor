@@ -15,6 +15,8 @@
 #include <WiFiClientSecure.h>
 #include <WiFiServer.h>
 #include <WiFiUdp.h>
+#include <time.h>
+
 
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
@@ -64,6 +66,8 @@ CCS811 co2sensor;
 float humidity = 0;
 float temp = 0;
 
+time_t start_time = 0;
+
 SI7021 sensor;
 
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(3, ledPin, NEO_RGB + NEO_KHZ800);
@@ -86,7 +90,7 @@ class PubSubClientPlus : public PubSubClient {
   boolean publish(const __FlashStringHelper* topic, const char* payload, boolean retained) {
     std::unique_ptr<char[]> buf(new char[strlen_P((PGM_P)topic) + 1]);
     strcpy_P(buf.get(), (PGM_P)topic);
-    return PubSubClient::subscribe(buf.get(), 0);
+    return PubSubClient::publish(buf.get(), payload, retained);
   }
 };
 
@@ -223,6 +227,24 @@ void setup_wifi() {
   mqttClient.setCallback(mqtt_callback);
 }
 
+
+void set_time() {
+  // UTC
+  configTime(0, 0, "192.168.0.249", "pool.ntp.org");
+  DEBUG_MSG_PP("Waiting for time\n");
+  unsigned timeout = 5000;
+  unsigned start = millis();
+  while (millis() - start < timeout) {
+    time_t now = time(nullptr);
+    // wait for a valid time
+    if (now > (2016 - 1970) * 365 * 24 * 3600) {
+        return;
+    }
+    delay(100);
+  }
+}
+
+
 void mqtt_reconnect() {
   while (!mqttClient.connected()) {
     DEBUG_MSG_PP("Attempting MQTT connection...\n");
@@ -318,6 +340,9 @@ void setup() {
   ArduinoOTA.begin();
   LLMNR.begin(host_name);  
 
+  set_time();
+  start_time = time(nullptr);
+
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(100000);
 
@@ -329,6 +354,13 @@ void setup() {
   
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.createObject();
+  struct tm * ptm = gmtime(&start_time);
+  
+  char timestring[25];
+  sprintf_P(timestring, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900, ptm->tm_mon +1, ptm->tm_mday,
+                  ptm->tm_hour,ptm->tm_min, ptm->tm_sec);
+  json[F("start_time")] = timestring;
+  //json[F("start_time_unix")] = timestring;
   json[F("major")] = co2sensor.getSWVersion().major;
   json[F("minor")] = co2sensor.getSWVersion().minor;
   json[F("trivial")] = co2sensor.getSWVersion().trivial;
