@@ -91,7 +91,7 @@ bool CCS811::readData() {
     return false;
 
   _status.set(buf[4]);
-  //Serial.printf("Buf %i,%i,%i,%i,%i,%i ",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+ 
   if (_status.ERROR)
     return false;
 
@@ -124,6 +124,23 @@ uint8_t CCS811::setEnvironmentalData(double humidity, double temperature) {
   _lastI2cError = this->write(Ccs811Register::env_data, buf, 4);
   return _lastI2cError;
 }
+
+uint16_t CCS811::readBaseline() {
+  uint8_t buf[2];
+  _lastI2cError = read(Ccs811Register::baseline, buf,2);
+  if(_lastI2cError !=0)
+    return 0x0000;
+  return buf[0]<<8 | buf[1];
+}
+
+bool CCS811::writeBaseline(uint16_t baseline) {
+  uint8_t buf[2];
+  buf[0] = (baseline >> 8) & 0xFF;
+  buf[1] = (baseline >> 0) & 0xFF;
+  _lastI2cError = write(Ccs811Register::baseline, buf,2);
+  return _lastI2cError == 0;
+}
+
 
 // calculate temperature based on the NTC register
 double CCS811::calculateTemperature() {

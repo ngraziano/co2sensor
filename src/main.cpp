@@ -17,7 +17,6 @@
 #include <WiFiUdp.h>
 #include <time.h>
 
-
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <WiFiManager.h>
@@ -27,13 +26,13 @@
 #include <SI7021.h>
 #include <Wire.h>
 
-#include <ESP8266LLMNR.h>
 #include <ArduinoOTA.h>
+#include <ESP8266LLMNR.h>
 
 #include "i2c_util.h"
 
 #ifdef DEBUG_ESP_PORT
-#define DEBUG_MSG(...) DEBUG_ESP_PORT.printf( __VA_ARGS__ )
+#define DEBUG_MSG(...) DEBUG_ESP_PORT.printf(__VA_ARGS__)
 #define DEBUG_MSG_PP(msg, ...) DEBUG_ESP_PORT.printf_P(PSTR(msg), ##__VA_ARGS__)
 #else
 #define DEBUG_MSG(...)
@@ -42,6 +41,7 @@
 
 static const char config_topic[] PROGMEM = "test/co2config";
 static const char light_topic[] PROGMEM = "test/co2light";
+static const char baseline_topic[] PROGMEM = "test/co2baseline";
 static const char host_name[] = "esp-co2";
 
 const int ccs811Addr = 0x5A;
@@ -68,6 +68,10 @@ float temp = 0;
 
 time_t start_time = 0;
 
+bool isBaseLineRestored = false;
+time_t lastBaseLineSave = 0;
+uint16_t baseLine = 0;
+
 SI7021 sensor;
 
 Adafruit_NeoPixel leds = Adafruit_NeoPixel(3, ledPin, NEO_RGB + NEO_KHZ800);
@@ -75,19 +79,21 @@ Adafruit_NeoPixel leds = Adafruit_NeoPixel(3, ledPin, NEO_RGB + NEO_KHZ800);
 WiFiClient mqttTcpClient;
 
 class PubSubClientPlus : public PubSubClient {
-  public:
-    PubSubClientPlus(Client& client) : PubSubClient(client) {
+public:
+  PubSubClientPlus(Client &client)
+      : PubSubClient(client){
 
-  };
+        };
 
-  boolean subscribe(const __FlashStringHelper* topic) {
+  boolean subscribe(const __FlashStringHelper *topic) {
     std::unique_ptr<char[]> buf(new char[strlen_P((PGM_P)topic) + 1]);
     strcpy_P(buf.get(), (PGM_P)topic);
 
     return PubSubClient::subscribe(buf.get(), 0);
   }
 
-  boolean publish(const __FlashStringHelper* topic, const char* payload, boolean retained) {
+  boolean publish(const __FlashStringHelper *topic, const char *payload,
+                  boolean retained) {
     std::unique_ptr<char[]> buf(new char[strlen_P((PGM_P)topic) + 1]);
     strcpy_P(buf.get(), (PGM_P)topic);
     return PubSubClient::publish(buf.get(), payload, retained);
@@ -95,9 +101,6 @@ class PubSubClientPlus : public PubSubClient {
 };
 
 PubSubClientPlus mqttClient(mqttTcpClient);
-
-
-
 
 // flag for saving data
 bool shouldSaveConfig = false;
@@ -114,12 +117,14 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
   JsonObject &json = jsonBuffer.parseObject(buf.get());
 
   if (json.success()) {
-    if(strcmp_P(topic, config_topic) == 0) {
+    if (strcmp_P(topic, config_topic) == 0) {
       temp_correction = json[F("temp_correction")];
     } else if (strcmp_P(topic, light_topic) == 0) {
       light_on = json[F("light_on")];
+    } else if (strcmp_P(topic, baseline_topic) == 0) {
+      baseLine = json[F("baseline")];
+      lastBaseLineSave = json[F("lastupdate")];
     }
-    
   }
 }
 
@@ -221,12 +226,11 @@ void setup_wifi() {
   }
   DEBUG_MSG_PP("local ip : %s \n", WiFi.localIP().toString().c_str());
   DEBUG_MSG_PP("Set server : %s:%i, username : %s \n", mqtt_server, mqtt_port,
-            mqtt_user);
+               mqtt_user);
 
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(mqtt_callback);
 }
-
 
 void set_time() {
   // UTC
@@ -238,12 +242,11 @@ void set_time() {
     time_t now = time(nullptr);
     // wait for a valid time
     if (now > (2016 - 1970) * 365 * 24 * 3600) {
-        return;
+      return;
     }
     delay(100);
   }
 }
-
 
 void mqtt_reconnect() {
   while (!mqttClient.connected()) {
@@ -253,8 +256,8 @@ void mqtt_reconnect() {
       // Once connected, publish an announcement...
       // client.publish("outTopic", "hello world");
       // ... and resubscribe
-      mqttClient.subscribe(FPSTR (config_topic));
-      mqttClient.subscribe(FPSTR (light_topic));
+      mqttClient.subscribe(FPSTR(config_topic));
+      mqttClient.subscribe(FPSTR(light_topic));
     } else {
       DEBUG_MSG_PP("failed, rc=%i\n", mqttClient.state());
       DEBUG_MSG_PP(" try again in 5 seconds\n");
@@ -330,15 +333,15 @@ void setup() {
     leds.show();
   });
 
-  ArduinoOTA.onError([](ota_error_t error) { 
+  ArduinoOTA.onError([](ota_error_t error) {
     leds.setPixelColor(0, 0xFF, 0x00, 0x00);
     leds.show();
-    ESP.restart(); 
+    ESP.restart();
   });
 
   /* setup the OTA server */
   ArduinoOTA.begin();
-  LLMNR.begin(host_name);  
+  LLMNR.begin(host_name);
 
   set_time();
   start_time = time(nullptr);
@@ -351,16 +354,17 @@ void setup() {
   sensor.begin(sdaPin, sclPin);
 
   mqtt_reconnect();
-  
+
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.createObject();
-  struct tm * ptm = gmtime(&start_time);
-  
+  struct tm *ptm = gmtime(&start_time);
+
   char timestring[25];
-  sprintf_P(timestring, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900, ptm->tm_mon +1, ptm->tm_mday,
-                  ptm->tm_hour,ptm->tm_min, ptm->tm_sec);
+  sprintf_P(timestring, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900,
+            ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min,
+            ptm->tm_sec);
   json[F("start_time")] = timestring;
-  //json[F("start_time_unix")] = timestring;
+  // json[F("start_time_unix")] = timestring;
   json[F("major")] = co2sensor.getSWVersion().major;
   json[F("minor")] = co2sensor.getSWVersion().minor;
   json[F("trivial")] = co2sensor.getSWVersion().trivial;
@@ -407,6 +411,36 @@ void printInfo() {
   Serial.printf_P(PSTR("Temp: %fC, Humidity: %f%%"), temp, humidity);
 }
 
+
+
+void restoreBaseLineIfneeded() {
+  if (isBaseLineRestored || baseLine == 0)
+    return;
+
+  time_t now = time(nullptr);
+  // start since 22 minutes
+  if (now - start_time > (22 * 60)) {
+    isBaseLineRestored = co2sensor.writeBaseline(baseLine);
+  }
+}
+
+void saveBaseLineIfneeded() {
+  time_t now = time(nullptr);
+  // save baseline every 24H and only after 30min since start
+  if ((now - lastBaseLineSave > (24 * 60 * 60)) &&
+      (now - start_time > (30 * 60))) {
+    baseLine = co2sensor.readBaseline();
+    lastBaseLineSave = now;
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject &json = jsonBuffer.createObject();
+    json[F("baseline")] = baseLine;
+    json[F("lastupdate")] = lastBaseLineSave;
+    char message[256];
+    json.printTo(message);
+    mqttClient.publish(FPSTR(baseline_topic), message, true);
+  }
+}
+
 const int nb_values_for_avg = 10;
 int nb_values = 0;
 const int nb_values_for_env_correction = 3;
@@ -426,7 +460,8 @@ void loop() {
 
   if (nb_loop_without_value > 50) {
     // try to restart i2c
-    DEBUG_MSG_PP("I2C recovery need loop without value : %i\n", nb_loop_without_value);
+    DEBUG_MSG_PP("I2C recovery need loop without value : %i\n",
+                 nb_loop_without_value);
     i2c_util::i2crecovery(sdaPin, sclPin);
   }
 
@@ -441,6 +476,9 @@ void loop() {
   if (nb_restart > 4) {
     ESP.restart();
   }
+
+  restoreBaseLineIfneeded();
+  saveBaseLineIfneeded();
 
   // Readdata return true if data available
   if (co2sensor.available() && co2sensor.readData()) {
@@ -458,7 +496,7 @@ void loop() {
     Serial.print("]");
     Serial.println();
 
-    if(light_on) {
+    if (light_on) {
       leds.setPixelColor(0, getColorFromValue(co2sensor.geteCO2()));
       leds.setPixelColor(1, getColorFromValue(co2sensor.getTVOC()));
     } else {
@@ -490,7 +528,7 @@ void loop() {
       sum_values_tvoc = 0;
     }
   } else {
-    if(co2sensor.isI2CError()) {
+    if (co2sensor.isI2CError()) {
       DEBUG_MSG_PP("I2C error : loop : %i\n", nb_loop_without_value);
     }
   }

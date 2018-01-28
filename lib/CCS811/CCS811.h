@@ -86,6 +86,9 @@ public:
   uint8_t enableInterrupt();
   uint8_t disableInterrupt();
 
+  uint16_t readBaseline();
+  bool writeBaseline(uint16_t baseline);
+
   uint16_t getTVOC() { return _TVOC; }
   uint16_t geteCO2() { return _eCO2; }
 
