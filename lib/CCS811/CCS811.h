@@ -64,8 +64,7 @@ public:
     uint8_t minor : 4;
     uint8_t major : 4;
   };
- 
-  
+
   // constructors
   CCS811(void){};
   ~CCS811(void){};
@@ -78,7 +77,7 @@ public:
   double calculateTemperature();
 
   uint8_t setThresholds(uint16_t low_med, uint16_t med_high,
-                     uint8_t hysteresis = 50);
+                        uint8_t hysteresis = 50);
 
   uint8_t SWReset();
 
@@ -100,7 +99,7 @@ public:
 
   // check if data is available to be read
   bool available();
-  
+
   bool readData();
 
   bool checkError();

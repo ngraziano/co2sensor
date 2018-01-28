@@ -1,13 +1,13 @@
 #include "CCS811.h"
 
-void set_version_data(CCS811::Version& version,uint8_t byte0, uint8_t byte1) {
+void set_version_data(CCS811::Version &version, uint8_t byte0, uint8_t byte1) {
   version.minor = (byte0 >> 0) & 0x0F;
   version.major = (byte0 >> 4) & 0x0F;
   version.trivial = byte1;
 }
 
 bool CCS811::begin(uint8_t addr) {
-  //default value for mode 
+  // default value for mode
   _meas_mode.DRIVE_MODE = 1;
   _meas_mode.INT_DATARDY = 0;
   _meas_mode.INT_THRESH = 0;
@@ -91,7 +91,7 @@ bool CCS811::readData() {
     return false;
 
   _status.set(buf[4]);
- 
+
   if (_status.ERROR)
     return false;
 
@@ -113,13 +113,12 @@ uint8_t CCS811::setEnvironmentalData(double humidity, double temperature) {
   not set by the application) to compensate for changes in
   relative humidity and ambient temperature.*/
 
-  uint16_t humidity_conv = humidity *512;
-  uint16_t temp_conv = (temperature+25) * 512;
+  uint16_t humidity_conv = humidity * 512;
+  uint16_t temp_conv = (temperature + 25) * 512;
 
-  uint8_t buf[] = { (uint8_t)((humidity_conv >> 8) & 0xFF), 
-                    (uint8_t)(humidity_conv & 0xFF), 
-                    (uint8_t)((temp_conv >> 8) & 0xFF),
-                    (uint8_t)(temp_conv & 0xFF)};
+  uint8_t buf[] = {
+      (uint8_t)((humidity_conv >> 8) & 0xFF), (uint8_t)(humidity_conv & 0xFF),
+      (uint8_t)((temp_conv >> 8) & 0xFF), (uint8_t)(temp_conv & 0xFF)};
 
   _lastI2cError = this->write(Ccs811Register::env_data, buf, 4);
   return _lastI2cError;
@@ -127,20 +126,19 @@ uint8_t CCS811::setEnvironmentalData(double humidity, double temperature) {
 
 uint16_t CCS811::readBaseline() {
   uint8_t buf[2];
-  _lastI2cError = read(Ccs811Register::baseline, buf,2);
-  if(_lastI2cError !=0)
+  _lastI2cError = read(Ccs811Register::baseline, buf, 2);
+  if (_lastI2cError != 0)
     return 0x0000;
-  return buf[0]<<8 | buf[1];
+  return buf[0] << 8 | buf[1];
 }
 
 bool CCS811::writeBaseline(uint16_t baseline) {
   uint8_t buf[2];
   buf[0] = (baseline >> 8) & 0xFF;
   buf[1] = (baseline >> 0) & 0xFF;
-  _lastI2cError = write(Ccs811Register::baseline, buf,2);
+  _lastI2cError = write(Ccs811Register::baseline, buf, 2);
   return _lastI2cError == 0;
 }
-
 
 // calculate temperature based on the NTC register
 double CCS811::calculateTemperature() {
