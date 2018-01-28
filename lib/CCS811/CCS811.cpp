@@ -100,7 +100,7 @@ bool CCS811::readData() {
   return true;
 }
 
-uint8_t CCS811::setEnvironmentalData(uint8_t humidity, double temperature) {
+uint8_t CCS811::setEnvironmentalData(double humidity, double temperature) {
   /* Humidity is stored as an unsigned 16 bits in 1/512%RH. The
   default value is 50% = 0x64, 0x00. As an example 48.5%
   humidity would be 0x61, 0x00.*/
@@ -113,16 +113,13 @@ uint8_t CCS811::setEnvironmentalData(uint8_t humidity, double temperature) {
   not set by the application) to compensate for changes in
   relative humidity and ambient temperature.*/
 
-  uint8_t hum_perc = humidity << 1;
+  uint16_t humidity_conv = humidity *512;
+  uint16_t temp_conv = (temperature+25) * 512;
 
-  float fractional = modf(temperature, &temperature);
-  uint16_t temp_high = (((uint16_t)temperature + 25) << 9);
-  uint16_t temp_low = ((uint16_t)(fractional / 0.001953125) & 0x1FF);
-
-  uint16_t temp_conv = (temp_high | temp_low);
-
-  uint8_t buf[] = {hum_perc, 0x00, (uint8_t)((temp_conv >> 8) & 0xFF),
-                   (uint8_t)(temp_conv & 0xFF)};
+  uint8_t buf[] = { (uint8_t)((humidity_conv >> 8) & 0xFF), 
+                    (uint8_t)(humidity_conv & 0xFF), 
+                    (uint8_t)((temp_conv >> 8) & 0xFF),
+                    (uint8_t)(temp_conv & 0xFF)};
 
   _lastI2cError = this->write(Ccs811Register::env_data, buf, 4);
   return _lastI2cError;

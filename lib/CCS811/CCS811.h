@@ -72,7 +72,7 @@ public:
 
   bool begin(uint8_t addr = CCS811_ADDRESS);
 
-  uint8_t setEnvironmentalData(uint8_t humidity, double temperature);
+  uint8_t setEnvironmentalData(double humidity, double temperature);
 
   // calculate temperature based on the NTC register
   double calculateTemperature();
