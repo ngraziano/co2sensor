@@ -51,7 +51,8 @@ void i2crecovery(uint8_t sdaPin, uint8_t sclPin) {
     }
     if (slc_low) { // still low after 2 sec error
       DEBUG_MSG_PP("SCL held low, can not recover by slave clock stretch "
-                 "for >2sec\n",0);
+                   "for >2sec\n",
+                   0);
       return; // I2C bus error. Could not clear. SCL clock line held low
               // by slave clock stretch for >2sec
     }
