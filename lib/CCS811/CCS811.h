@@ -57,6 +57,15 @@ enum class Ccs811Drive : uint8_t {
 
 class CCS811 {
 public:
+  // The status register
+  struct Version {
+
+    uint8_t trivial;
+    uint8_t minor : 4;
+    uint8_t major : 4;
+  };
+ 
+  
   // constructors
   CCS811(void){};
   ~CCS811(void){};
@@ -80,12 +89,15 @@ public:
   uint16_t getTVOC() { return _TVOC; }
   uint16_t geteCO2() { return _eCO2; }
 
+  Version getSWVersion() { return _fw_version; }
+
   void setTempOffset(float offset) { _tempOffset = offset; }
 
   bool isI2CError() { return _lastI2cError != 0; }
 
   // check if data is available to be read
   bool available();
+  
   bool readData();
 
   bool checkError();
@@ -97,6 +109,8 @@ private:
   uint16_t _TVOC;
   uint16_t _eCO2;
   uint8_t _lastI2cError;
+
+  Version _fw_version;
 
   uint8_t read(Ccs811Register reg, uint8_t *buf, uint8_t num);
   uint8_t write(Ccs811Register reg, uint8_t *buf, uint8_t num);

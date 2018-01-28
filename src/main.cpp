@@ -83,6 +83,11 @@ class PubSubClientPlus : public PubSubClient {
     return PubSubClient::subscribe(buf.get(), 0);
   }
 
+  boolean publish(const __FlashStringHelper* topic, const char* payload, boolean retained) {
+    std::unique_ptr<char[]> buf(new char[strlen_P((PGM_P)topic) + 1]);
+    strcpy_P(buf.get(), (PGM_P)topic);
+    return PubSubClient::subscribe(buf.get(), 0);
+  }
 };
 
 PubSubClientPlus mqttClient(mqttTcpClient);
@@ -319,6 +324,17 @@ void setup() {
   init_co2_sensor();
   // Initialize the I2C sensors and ping them
   sensor.begin(sdaPin, sclPin);
+
+  mqtt_reconnect();
+  
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject &json = jsonBuffer.createObject();
+  json[F("major")] = co2sensor.getSWVersion().major;
+  json[F("minor")] = co2sensor.getSWVersion().minor;
+  json[F("trivial")] = co2sensor.getSWVersion().trivial;
+  char message[256];
+  json.printTo(message);
+  mqttClient.publish(F("test/co2version"), message, true);
 }
 
 uint32_t getColorFromValue(uint16_t valuePPM) {
@@ -343,7 +359,7 @@ void publish_enviroment_data(uint16_t co2, uint16_t tvoc, float humidity,
   json[F("temperature")] = temperature;
   char message[256];
   json.printTo(message);
-  mqttClient.publish("test/co2", message, true);
+  mqttClient.publish(F("test/co2"), message, true);
 }
 
 //---------------------------------------------------------------

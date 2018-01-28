@@ -1,4 +1,11 @@
 #include "CCS811.h"
+
+void set_version_data(CCS811::Version& version,uint8_t byte0, uint8_t byte1) {
+  version.minor = (byte0 >> 0) & 0x0F;
+  version.major = (byte0 >> 4) & 0x0F;
+  version.trivial = byte1;
+}
+
 bool CCS811::begin(uint8_t addr) {
   //default value for mode 
   _meas_mode.DRIVE_MODE = 1;
@@ -27,6 +34,10 @@ bool CCS811::begin(uint8_t addr) {
 
   if (!_status.FW_MODE)
     return false;
+
+  uint8_t versionData[2];
+  read(Ccs811Register::fw_app_version, versionData, 2);
+  set_version_data(_fw_version, versionData[0], versionData[1]);
 
   disableInterrupt();
 
