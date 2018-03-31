@@ -302,6 +302,29 @@ void init_co2_sensor() {
 
   co2sensor.setDriveMode(Ccs811Drive::mode_1sec);
   co2sensor.disableInterrupt();
+
+  // reset start
+  isBaseLineRestored = false;
+  start_time = time(nullptr);
+}
+
+void sendVersionAndLastStart() {
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject &json = jsonBuffer.createObject();
+  struct tm *ptm = gmtime(&start_time);
+
+  char timestring[25];
+  sprintf_P(timestring, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900,
+            ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min,
+            ptm->tm_sec);
+  json[F("start_time")] = timestring;
+  // json[F("start_time_unix")] = timestring;
+  json[F("major")] = co2sensor.getSWVersion().major;
+  json[F("minor")] = co2sensor.getSWVersion().minor;
+  json[F("trivial")] = co2sensor.getSWVersion().trivial;
+  char message[256];
+  json.printTo(message);
+  mqttClient.publish(F("test/co2version"), message, true);
 }
 
 void setup() {
@@ -344,7 +367,6 @@ void setup() {
   LLMNR.begin(host_name);
 
   set_time();
-  start_time = time(nullptr);
 
   Wire.begin(sdaPin, sclPin);
   Wire.setClock(100000);
@@ -355,22 +377,7 @@ void setup() {
 
   mqtt_reconnect();
 
-  DynamicJsonBuffer jsonBuffer;
-  JsonObject &json = jsonBuffer.createObject();
-  struct tm *ptm = gmtime(&start_time);
-
-  char timestring[25];
-  sprintf_P(timestring, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900,
-            ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min,
-            ptm->tm_sec);
-  json[F("start_time")] = timestring;
-  // json[F("start_time_unix")] = timestring;
-  json[F("major")] = co2sensor.getSWVersion().major;
-  json[F("minor")] = co2sensor.getSWVersion().minor;
-  json[F("trivial")] = co2sensor.getSWVersion().trivial;
-  char message[256];
-  json.printTo(message);
-  mqttClient.publish(F("test/co2version"), message, true);
+  sendVersionAndLastStart();
 }
 
 uint32_t getColorFromValue(uint16_t valuePPM) {
@@ -410,8 +417,6 @@ void printInfo() {
 
   Serial.printf_P(PSTR("Temp: %fC, Humidity: %f%%"), temp, humidity);
 }
-
-
 
 void restoreBaseLineIfneeded() {
   if (isBaseLineRestored || baseLine == 0)
@@ -467,6 +472,7 @@ void loop() {
 
   if (nb_loop_without_value > 55) {
     init_co2_sensor();
+    sendVersionAndLastStart();
     // give time to startup again
     nb_loop_without_value = 0;
     nb_restart++;
