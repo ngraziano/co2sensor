@@ -97,6 +97,9 @@ bool CCS811::readData() {
 
   _eCO2 = ((uint16_t)buf[0] << 8) | ((uint16_t)buf[1]);
   _TVOC = ((uint16_t)buf[2] << 8) | ((uint16_t)buf[3]);
+  _RawCurrent = buf[6] >> 2;
+  _RawVoltage = ((uint16_t)(buf[6] & 0x03) << 8) | ((uint16_t)buf[7]);
+  
   return true;
 }
 

@@ -90,6 +90,8 @@ public:
 
   uint16_t getTVOC() { return _TVOC; }
   uint16_t geteCO2() { return _eCO2; }
+  uint8_t getRawCurrent() { return _RawCurrent; }
+  uint16_t getRawVoltage() { return _RawVoltage; }
 
   Version getSWVersion() { return _fw_version; }
 
@@ -110,6 +112,9 @@ private:
 
   uint16_t _TVOC;
   uint16_t _eCO2;
+  uint8_t _RawCurrent;
+  uint16_t _RawVoltage;
+
   uint8_t _lastI2cError;
 
   Version _fw_version;

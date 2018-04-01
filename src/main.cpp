@@ -393,13 +393,16 @@ uint32_t getColorFromValue(uint16_t valuePPM) {
 }
 
 void publish_enviroment_data(uint16_t co2, uint16_t tvoc, float humidity,
-                             float temperature) {
+                             float temperature,
+                             uint16_t rawCurrent, uint16_t rawTension) {
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.createObject();
   json[F("co2")] = co2;
   json[F("tvoc")] = tvoc;
   json[F("humidity")] = humidity;
   json[F("temperature")] = temperature;
+  json[F("raw_current")] = rawCurrent;
+  json[F("raw_tension")] = rawTension;
   char message[256];
   json.printTo(message);
   mqttClient.publish(F("test/co2"), message, true);
@@ -527,7 +530,9 @@ void loop() {
       }
 
       publish_enviroment_data(sum_values_co2 / nb_values,
-                              sum_values_tvoc / nb_values, humidity, temp);
+                              sum_values_tvoc / nb_values, humidity, temp,
+                              co2sensor.getRawCurrent(),
+                              co2sensor.getRawVoltage());
 
       nb_values = 0;
       sum_values_co2 = 0;
